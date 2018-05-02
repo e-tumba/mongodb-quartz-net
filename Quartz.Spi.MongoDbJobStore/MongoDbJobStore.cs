@@ -1199,7 +1199,7 @@ namespace Quartz.Spi.MongoDbJobStore
             _schedulerSignaler.NotifyTriggerListenersMisfired(operableTrigger);
             operableTrigger.UpdateAfterMisfire(cal);
 
-            if (operableTrigger.GetNextFireTimeUtc().HasValue)
+            if (!operableTrigger.GetNextFireTimeUtc().HasValue)
             {
                 StoreTriggerInternal(operableTrigger, null, true, Models.TriggerState.Complete, forceState, recovering);
                 _schedulerSignaler.NotifySchedulerListenersFinalized(operableTrigger);
