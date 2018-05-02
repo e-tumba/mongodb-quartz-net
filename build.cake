@@ -16,8 +16,10 @@ Task("Clean")
     CleanDirectories(paths.SrcFolder + "/**/bin/" + parameters.Configuration);
 	CleanDirectories(paths.SrcFolder + "/**/obj/" + parameters.Configuration);
 
-    if(!DirectoryExists(paths.PackagesFolder))
-		CreateDirectory(paths.PackagesFolder);
+    if(DirectoryExists(paths.PackagesFolder))
+        DeleteDirectory(paths.PackagesFolder, true);
+
+    CreateDirectory(paths.PackagesFolder);
 });
 
 Task("Restore")
@@ -71,9 +73,8 @@ Task("CreateNugetPackages")
         return !fi.Path.FullPath.EndsWith("tests", StringComparison.OrdinalIgnoreCase);
     };
     
-    Information(paths.SrcFolder);
     var projects = GetFiles(paths.SrcFolder + "**/*.csproj", exclude_tests);
-    
+
     NuGetPack(projects, new NuGetPackSettings
     {
         Properties = new Dictionary<string, string> {{"Configuration", parameters.Configuration}},
@@ -88,12 +89,8 @@ Task("PublishNugetPackages")
     .IsDependentOn("CreateNugetPackages")
     .Does(() => 
 {
-    Func<IFileSystemInfo, bool> exclude_symbols = fi =>
-    {
-        return !fi.Path.FullPath.EndsWith("symbols", StringComparison.OrdinalIgnoreCase);
-    };
-
-    var packages = GetFiles(paths.PackagesFolder + "/**/*.nupkg", exclude_symbols);
+    var packages = GetFiles(paths.PackagesFolder + "/**/*.nupkg")
+        .Where(_ => !_.ToString().EndsWith("symbols.nupkg", StringComparison.OrdinalIgnoreCase));
     
     NuGetPush(packages, new NuGetPushSettings
     {
