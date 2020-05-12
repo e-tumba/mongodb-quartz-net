@@ -1,126 +1,163 @@
-#tool "nuget:?package=GitVersion.CommandLine"
+/* *** READ ME CAREFULLY
+before using this script, you must register the following environment variables:
+PRIVATE_NUGET_URL, PRIVATE_NUGET_API_KEY
+***  */
+
+// Install addins.
+
+// Install tools.
+#tool "nuget:https://api.nuget.org/v3/index.json?package=GitVersion.CommandLine&version=3.6.2"
+
 
 #load "./build/parameters.cake"
 #load "./build/credentials.cake"
 #load "./build/paths.cake"
 
+
+//////////////////////////////////////////////////////////////////////
+// PARAMETERS
+//////////////////////////////////////////////////////////////////////
+GitVersion version;
+DotNetCoreMSBuildSettings msBuildSettings;
 BuildParameters parameters = BuildParameters.Load(Context);
 BuildPaths paths = BuildPaths.Load(Context);
-Credentials credentials = Credentials.New(Context);
+Credentials nugetCredentials = Credentials.New(Context);
 
-var version = GitVersion();
+string assemblyVersion, fileVersion, informationalVersion, nugetVersion;
 
+//////////////////////////////////////////////////////////////////////
+// SETUP/TEARDOWN
+//////////////////////////////////////////////////////////////////////
+Setup(context =>
+{
+    version = GitVersion();
+    printVersion(version);
+
+    assemblyVersion = $"{version.Major}.{version.Minor}.0.0";
+    fileVersion = $"{version.MajorMinorPatch}.0";
+    informationalVersion = version.InformationalVersion;
+    nugetVersion = version.NuGetVersion;
+
+    msBuildSettings = new DotNetCoreMSBuildSettings()
+        .WithProperty("Version", nugetVersion)
+        .WithProperty("AssemblyVersion", assemblyVersion)
+        .WithProperty("FileVersion", fileVersion)
+        .WithProperty("InformationalVersion", informationalVersion);
+});
+
+Teardown(context =>
+{
+    Information("Task completed at {0}", DateTime.Now.ToString("s"));
+    Console.ForegroundColor = ConsoleColor.Green;
+    Console.Write(@"
+                           *     .--.
+                                / /  `
+               +               | |
+                      '         \ \__,
+                  *          +   '--'  *
+                      +   /\
+         +              .'  '.   *
+                *      /======\      +
+                      ;:.  _   ;
+                      |:. (_)  |
+                      |:.  _   |
+            +         |:. (_)  |          *
+                      ;:.      ;
+                    .' \:.    / `.
+                   / .-'':._.'`-. \
+                   |/    /||\    \|
+             jgs _..--""""""""""""""""""""--.._
+            _.-'``                    ``'-._
+                -'                                '-
+    ");
+});
+
+//////////////////////////////////////////////////////////////////////
+// TASKS
+//////////////////////////////////////////////////////////////////////
 Task("Clean")
     .Does(() =>
-{
-    CleanDirectories(paths.SrcFolder + "/**/bin/" + parameters.Configuration);
-	CleanDirectories(paths.SrcFolder + "/**/obj/" + parameters.Configuration);
+    {
+        CleanDirectories(paths.SrcFolder + "/**/bin/" + parameters.Configuration);
+        CleanDirectories(paths.SrcFolder + "/**/obj/" + parameters.Configuration);
 
-    if(DirectoryExists(paths.PackagesFolder))
-        DeleteDirectory(paths.PackagesFolder, true);
+        if(!DirectoryExists(paths.PackagesFolder))
+            CreateDirectory(paths.PackagesFolder);
 
-    CreateDirectory(paths.PackagesFolder);
-});
+        CleanDirectory(paths.PackagesFolder);
+    });
 
 Task("Restore")
     .Does(() =>
-{
-    NuGetRestore(paths.Solution);
-});
-
-Task("SetVersion")
-	.Does(() => 
-{
-    printVersion(version);
-
-    var files = GetFiles(MakeAbsolute(Directory(paths.RootFolder)).FullPath + "/**/AssemblyInfo.cs");
-    foreach(var file in files)
     {
-        // parse file
-        var assemblyInfo = ParseAssemblyInfo(file);
-        
-        // update file
-        CreateAssemblyInfo(file, new AssemblyInfoSettings {
-            Company = assemblyInfo.Company,
-            Product = assemblyInfo.Product,
-            Copyright = string.Format("Copyright (c) 2015 - {0}", DateTime.Now.Year),
-            Version = string.Format("{0}.{1}.0.0", version.Major, version.Minor),
-            FileVersion = string.Format("{0}.0", version.MajorMinorPatch),
-            InformationalVersion = version.InformationalVersion
-        });
-    }
-});
+        NuGetRestore(paths.Solution);
+    });
 
 Task("Build")
     .IsDependentOn("Clean")
     .IsDependentOn("Restore")
     .Does(() =>
-{
-	MSBuild(paths.Solution, settings => settings
-        .SetConfiguration(parameters.Configuration)
-        .SetPlatformTarget(PlatformTarget.MSIL)
-        // force 32bit msbuild version call cause of Microsoft.NET.Sdk.Publish.Tasks.dll compiled in 32 bits, see https://github.com/dotnet/sdk/issues/1073
-        .SetMSBuildPlatform(Cake.Common.Tools.MSBuild.MSBuildPlatform.x86) 
-    );
-});
-
-Task("CreateNugetPackages")
-	.IsDependentOn("Build")
-	.Does(() => 
-{
-    Func<IFileSystemInfo, bool> exclude_tests = fi =>
     {
-        return !fi.Path.FullPath.EndsWith("tests", StringComparison.OrdinalIgnoreCase);
-    };
-    
-    var projects = GetFiles(paths.SrcFolder + "**/*.csproj", exclude_tests);
+        var settings = new DotNetCoreBuildSettings
+        {
+            Configuration = parameters.Configuration,
+            MSBuildSettings = msBuildSettings
+        };
 
-    NuGetPack(projects, new NuGetPackSettings
-    {
-        Properties = new Dictionary<string, string> {{"Configuration", parameters.Configuration}},
-        Version = version.NuGetVersion,
-        Symbols = true,
-        OutputDirectory = paths.PackagesFolder,
-		IncludeReferencedProjects = true        
+        DotNetCoreBuild(paths.Solution, settings);
     });
-});
 
-Task("PublishNugetPackages")
-    .IsDependentOn("CreateNugetPackages")
-    .Does(() => 
-{
-    var packages = GetFiles(paths.PackagesFolder + "/**/*.nupkg")
-        .Where(_ => !_.ToString().EndsWith("symbols.nupkg", StringComparison.OrdinalIgnoreCase));
-    
-    NuGetPush(packages, new NuGetPushSettings
+Task("Create-NuGet-Packages")
+    .IsDependentOn("Build")
+    .Does(() =>
     {
-       Source = credentials.NugetUrl,
-       ApiKey =  credentials.NugetApiKey
+		var projects = GetFiles(paths.SrcFolder + "/**/*Quartz.Spi.MongoDbJobStore*.csproj");
+
+        foreach(var project in projects)
+        {
+            // .NET Core
+            DotNetCorePack(project.FullPath, new DotNetCorePackSettings {
+                Configuration = parameters.Configuration,
+                OutputDirectory = paths.PackagesFolder,
+                NoBuild = true,
+                NoRestore = true,
+                IncludeSymbols = true,
+                MSBuildSettings = msBuildSettings
+            });
+        }
     });
-});
+
+Task("Publish-NuGet")
+    .IsDependentOn("Create-NuGet-Packages")
+    .Does(() =>
+    {
+        var packages = GetFiles(paths.PackagesFolder + "/**/*.nupkg")
+            .Where(_ => !_.ToString().EndsWith("symbols.nupkg", StringComparison.OrdinalIgnoreCase));
+
+        NuGetPush(packages, new NuGetPushSettings
+        {
+            Source = nugetCredentials.NugetUrl,
+            ApiKey =  nugetCredentials.NugetApiKey
+        });
+    });
 
 //////////////////////////////////////////////////////////////////////
-// TASK TARGETS
+// TARGETS
 //////////////////////////////////////////////////////////////////////
-
 Task("Release")
-    .IsDependentOn("PublishNugetPackages")
-	.Does(() => 
-	{
-		printEnd();
-	});
+    .IsDependentOn("Publish-NuGet");
 
 Task("Default")
    .Does(() => 
-	{
-		Information("Please select a build target from the following list:");
-		Information("------------------------------------------------------------");
-		foreach(var task in Tasks) 
-		{
-		   Information("\t{0}", task.Name);
-		}
-		Information("------------------------------------------------------------");
-	});
+    {
+        Information("Please select a build target from the following list:");
+        Information("------------------------------------------------------------");
+        foreach(var task in Tasks) 
+        {
+            Information("\t{0}", task.Name);
+        }
+        Information("------------------------------------------------------------");
+    });
 
 Action<GitVersion> printVersion = (version) => {
     // Information("AssemblySemFileVer: {0}", version.AssemblySemFileVer);
@@ -150,34 +187,7 @@ Action<GitVersion> printVersion = (version) => {
     Information("Sha: {0}", version.Sha);
 };
 
-Action printEnd = () => {
-	Information("Task completed at {0}", DateTime.Now.ToString("s"));
-		Console.ForegroundColor = ConsoleColor.Green;
-            Console.Write(@"
-                           *     .--.
-                                / /  `
-               +               | |
-                      '         \ \__,
-                  *          +   '--'  *
-                      +   /\
-         +              .'  '.   *
-                *      /======\      +
-                      ;:.  _   ;
-                      |:. (_)  |
-                      |:.  _   |
-            +         |:. (_)  |          *
-                      ;:.      ;
-                    .' \:.    / `.
-                   / .-'':._.'`-. \
-                   |/    /||\    \|
-             jgs _..--""""""""""""""""""""--.._
-            _.-'``                    ``'-._
-                -'                                '-
-            ");
-};
-
 //////////////////////////////////////////////////////////////////////
 // EXECUTION
 //////////////////////////////////////////////////////////////////////
-
 RunTarget(parameters.Target);

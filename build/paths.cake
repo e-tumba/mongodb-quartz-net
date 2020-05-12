@@ -16,7 +16,7 @@ public class BuildPaths
 
         return new BuildPaths {
             RootFolder = rootFolder,
-            SrcFolder = rootFolder,
+            SrcFolder = System.IO.Path.Combine(rootFolder, "src"),
             Solution = System.IO.Path.Combine(rootFolder, "mongodb-quartznet.sln"),
             PackagesFolder = System.IO.Path.Combine(rootFolder, "dist"),
         };
